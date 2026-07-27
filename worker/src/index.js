@@ -25,7 +25,7 @@ export async function processJob(jobId) {
 
     await updateJobStatus(jobId, 'processing');
     const audioPath = await extractAudio(filePath, workDir);
-    const { segments } = await transcribeAudio(audioPath, workDir);
+    const { segments } = await transcribeAudio(audioPath);
     console.log(`Transcript selesai: ${segments.length} segmen`);
 
     const highlights = await findHighlights(segments, durationSeconds, 5);

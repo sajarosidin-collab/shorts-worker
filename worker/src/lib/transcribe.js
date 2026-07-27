@@ -1,58 +1,46 @@
-import OpenAI from 'openai';
-import fs from 'fs';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleAIFileManager } from '@google/generative-ai/server';
 
-const execFileAsync = promisify(execFile);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
 
-// Whisper limit 25MB -> split audio jadi chunk per 10 menit kalau perlu
-export async function transcribeAudio(audioPath, outputDir) {
-  const stats = fs.statSync(audioPath);
-  const sizeMB = stats.size / (1024 * 1024);
-
-  if (sizeMB <= 24) {
-    return await transcribeChunk(audioPath, 0);
-  }
-
-  // split jadi chunk 10 menit
-  const chunkPattern = `${outputDir}/chunk_%03d.mp3`;
-  await execFileAsync('ffmpeg', [
-    '-i', audioPath,
-    '-f', 'segment',
-    '-segment_time', '600',
-    '-c', 'copy',
-    '-y', chunkPattern
-  ]);
-
-  const chunkFiles = fs.readdirSync(outputDir)
-    .filter(f => f.startsWith('chunk_'))
-    .sort();
-
-  let allSegments = [];
-  let offset = 0;
-  for (const file of chunkFiles) {
-    const result = await transcribeChunk(`${outputDir}/${file}`, offset);
-    allSegments = allSegments.concat(result.segments);
-    offset += result.durationSeconds;
-  }
-  return { segments: allSegments };
-}
-
-async function transcribeChunk(filePath, timeOffset) {
-  const response = await openai.audio.transcriptions.create({
-    file: fs.createReadStream(filePath),
-    model: 'whisper-1',
-    response_format: 'verbose_json',
-    timestamp_granularities: ['segment', 'word']
+export async function transcribeAudio(audioPath) {
+  console.log('Upload audio ke Gemini File API...');
+  const uploadResult = await fileManager.uploadFile(audioPath, {
+    mimeType: 'audio/mpeg',
+    displayName: 'audio-transcribe'
   });
 
-  const segments = (response.segments || []).map(s => ({
-    start: s.start + timeOffset,
-    end: s.end + timeOffset,
-    text: s.text.trim()
-  }));
+  let file = uploadResult.file;
+  while (file.state === 'PROCESSING') {
+    await new Promise(r => setTimeout(r, 3000));
+    file = await fileManager.getFile(file.name);
+  }
+  if (file.state === 'FAILED') {
+    throw new Error('Gemini gagal memproses file audio');
+  }
 
-  const lastEnd = segments.length ? segments[segments.length - 1].end : 0;
-  return { segments, durationSeconds: lastEnd - timeOffset };
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+  const prompt = `Transkrip audio ini secara lengkap dalam bahasa aslinya (kalau Bahasa Indonesia, tulis Bahasa Indonesia).
+Pecah jadi potongan kalimat/frasa pendek (5-15 kata), dan untuk TIAP potongan berikan timestamp mulai dan selesai dalam DETIK (angka desimal) sesuai posisi asli di audio.
+
+Balas HANYA dalam format JSON array, tanpa markdown, tanpa penjelasan tambahan:
+[
+  {"start": <detik mulai, number>, "end": <detik selesai, number>, "text": "<isi kalimat>"}
+]`;
+
+  const result = await model.generateContent([
+    { fileData: { fileUri: file.uri, mimeType: file.mimeType } },
+    { text: prompt }
+  ]);
+
+  let text = result.response.text().trim();
+  text = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
+
+  const segments = JSON.parse(text);
+
+  await fileManager.deleteFile(file.name).catch(() => {});
+
+  return { segments };
 }
