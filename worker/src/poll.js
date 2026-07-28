@@ -1,4 +1,3 @@
-cat > worker/src/poll.js << 'EOF'
 import { supabase } from './lib/supabase.js';
 import { processJob } from './index.js';
 
@@ -27,4 +26,3 @@ async function pollOnce() {
 }
 
 pollOnce().then(() => process.exit(0));
-EOF
