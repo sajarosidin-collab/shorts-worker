@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export async function findHighlights(transcriptSegments, videoDurationSeconds, maxClips = 5) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const transcriptText = transcriptSegments
     .map(s => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text}`)
