@@ -20,7 +20,7 @@ export async function transcribeAudio(audioPath) {
     throw new Error('Gemini gagal memproses file audio');
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
   const prompt = `Transkrip audio ini secara lengkap dalam bahasa aslinya (kalau Bahasa Indonesia, tulis Bahasa Indonesia).
 Pecah jadi potongan kalimat/frasa pendek (5-15 kata), dan untuk TIAP potongan berikan timestamp mulai dan selesai dalam DETIK (angka desimal) sesuai posisi asli di audio.
