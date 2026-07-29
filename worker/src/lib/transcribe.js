@@ -1,46 +1,73 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GoogleAIFileManager } from '@google/generative-ai/server';
+import fs from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
+const execFileAsync = promisify(execFile);
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 
-export async function transcribeAudio(audioPath) {
-  console.log('Upload audio ke Gemini File API...');
-  const uploadResult = await fileManager.uploadFile(audioPath, {
-    mimeType: 'audio/mpeg',
-    displayName: 'audio-transcribe'
+async function transcribeChunk(filePath, timeOffset) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const blob = new Blob([fileBuffer], { type: 'audio/mpeg' });
+
+  const form = new FormData();
+  form.append('file', blob, 'audio.mp3');
+  form.append('model', 'whisper-large-v3');
+  form.append('response_format', 'verbose_json');
+  form.append('timestamp_granularities[]', 'segment');
+
+  const response = await fetch(GROQ_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`
+    },
+    body: form
   });
 
-  let file = uploadResult.file;
-  while (file.state === 'PROCESSING') {
-    await new Promise(r => setTimeout(r, 3000));
-    file = await fileManager.getFile(file.name);
-  }
-  if (file.state === 'FAILED') {
-    throw new Error('Gemini gagal memproses file audio');
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API error: ${response.status} ${errText}`);
   }
 
-  const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+  const data = await response.json();
 
-  const prompt = `Transkrip audio ini secara lengkap dalam bahasa aslinya (kalau Bahasa Indonesia, tulis Bahasa Indonesia).
-Pecah jadi potongan kalimat/frasa pendek (5-15 kata), dan untuk TIAP potongan berikan timestamp mulai dan selesai dalam DETIK (angka desimal) sesuai posisi asli di audio.
+  const segments = (data.segments || []).map(s => ({
+    start: s.start + timeOffset,
+    end: s.end + timeOffset,
+    text: s.text.trim()
+  }));
 
-Balas HANYA dalam format JSON array, tanpa markdown, tanpa penjelasan tambahan:
-[
-  {"start": <detik mulai, number>, "end": <detik selesai, number>, "text": "<isi kalimat>"}
-]`;
+  const lastEnd = segments.length ? segments[segments.length - 1].end : 0;
+  return { segments, durationSeconds: lastEnd - timeOffset };
+}
 
-  const result = await model.generateContent([
-    { fileData: { fileUri: file.uri, mimeType: file.mimeType } },
-    { text: prompt }
+export async function transcribeAudio(audioPath, outputDir) {
+  const stats = fs.statSync(audioPath);
+  const sizeMB = stats.size / (1024 * 1024);
+
+  if (sizeMB <= 24) {
+    return await transcribeChunk(audioPath, 0);
+  }
+
+  const dir = outputDir || audioPath.substring(0, audioPath.lastIndexOf('/'));
+  const chunkPattern = `${dir}/chunk_%03d.mp3`;
+  await execFileAsync('ffmpeg', [
+    '-i', audioPath,
+    '-f', 'segment',
+    '-segment_time', '600',
+    '-c', 'copy',
+    '-y', chunkPattern
   ]);
 
-  let text = result.response.text().trim();
-  text = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '');
+  const chunkFiles = fs.readdirSync(dir)
+    .filter(f => f.startsWith('chunk_'))
+    .sort();
 
-  const segments = JSON.parse(text);
-
-  await fileManager.deleteFile(file.name).catch(() => {});
-
-  return { segments };
+  let allSegments = [];
+  let offset = 0;
+  for (const file of chunkFiles) {
+    const result = await transcribeChunk(`${dir}/${file}`, offset);
+    allSegments = allSegments.concat(result.segments);
+    offset += result.durationSeconds;
+  }
+  return { segments: allSegments };
 }
