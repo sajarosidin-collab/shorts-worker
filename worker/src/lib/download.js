@@ -8,6 +8,7 @@ export async function downloadVideo(youtubeUrl, outputDir) {
   const outputPath = `${outputDir}/source.mp4`;
 
   await execFileAsync('yt-dlp', [
+    '--extractor-args', 'youtube:player_client=android,web',
     '-f', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     '--merge-output-format', 'mp4',
     '-o', outputPath,
