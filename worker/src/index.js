@@ -5,7 +5,7 @@ import { supabase, updateJobStatus, getJob, insertClip, uploadFile } from './lib
 import { downloadVideo, extractAudio } from './lib/download.js';
 import { transcribeAudio } from './lib/transcribe.js';
 import { findHighlights } from './lib/analyze.js';
-import { buildSrt, cutClip, burnSubtitle } from './lib/clip.js';
+import { cutClip } from './lib/clip.js';
 
 export async function processJob(jobId) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-'));
@@ -39,20 +39,11 @@ export async function processJob(jobId) {
       const h = highlights[i];
       console.log(`Proses clip ${i + 1}/${highlights.length}: ${h.title}`);
 
-      const rawClipPath = `${workDir}/clip_${i}_raw.mp4`;
-      const srtPath = `${workDir}/clip_${i}.srt`;
-      const finalClipPath = `${workDir}/clip_${i}_final.mp4`;
+      const clipPath = `${workDir}/clip_${i}.mp4`;
+      await cutClip(filePath, clipPath, h.start, h.end);
 
-      await cutClip(filePath, rawClipPath, h.start, h.end);
-
-      const srtContent = buildSrt(segments, h.start, h.end);
-      fs.writeFileSync(srtPath, srtContent);
-
-      await burnSubtitle(rawClipPath, srtPath, finalClipPath);
-
-      const videoBuffer = fs.readFileSync(finalClipPath);
+      const videoBuffer = fs.readFileSync(clipPath);
       const videoUrl = await uploadFile(`${jobId}/clip_${i}.mp4`, videoBuffer, 'video/mp4');
-      const subtitleUrl = await uploadFile(`${jobId}/clip_${i}.srt`, Buffer.from(srtContent), 'text/plain');
 
       await insertClip({
         job_id: jobId,
@@ -62,7 +53,7 @@ export async function processJob(jobId) {
         title: h.title,
         caption: h.caption,
         video_url: videoUrl,
-        subtitle_url: subtitleUrl,
+        subtitle_url: null,
         status: 'ready'
       });
 
@@ -79,7 +70,6 @@ export async function processJob(jobId) {
   }
 }
 
-// Kalau dijalankan langsung (bukan diimport), proses 1 job dari JOB_ID env var
 if (process.env.JOB_ID) {
   processJob(process.env.JOB_ID).then(() => process.exit(0));
 }
