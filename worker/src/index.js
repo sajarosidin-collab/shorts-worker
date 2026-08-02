@@ -5,7 +5,7 @@ import { supabase, updateJobStatus, getJob, insertClip, uploadFile } from './lib
 import { downloadVideo, extractAudio } from './lib/download.js';
 import { transcribeAudio } from './lib/transcribe.js';
 import { findHighlights } from './lib/analyze.js';
-import { cutClip } from './lib/clip.js';
+import { cutClip, detectFaceCrop } from './lib/clip.js';
 
 export async function processJob(jobId) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'job-'));
@@ -40,7 +40,8 @@ export async function processJob(jobId) {
       console.log(`Proses clip ${i + 1}/${highlights.length}: ${h.title}`);
 
       const clipPath = `${workDir}/clip_${i}.mp4`;
-      await cutClip(filePath, clipPath, h.start, h.end);
+      const faceData = await detectFaceCrop(filePath, h.start, h.end);
+      await cutClip(filePath, clipPath, h.start, h.end, faceData);
 
       const videoBuffer = fs.readFileSync(clipPath);
       const videoUrl = await uploadFile(`${jobId}/clip_${i}.mp4`, videoBuffer, 'video/mp4');
